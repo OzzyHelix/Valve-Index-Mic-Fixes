@@ -1,3 +1,4 @@
+>Warning: Use at your own risk. This software is **EXPERIMENTAL** and is not advised for use in production systems. Backing up your data before use is strongly recommended.
 # Valve Index Microphone Fix for Linux (PipeWire)
 
 A comprehensive guide to fixing the Valve Index microphone not producing audio on Linux systems using PipeWire/WirePlumber. The mic is detected by the system but records complete silence (peak amplitude: 0).
