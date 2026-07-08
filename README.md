@@ -1,6 +1,6 @@
 >Warning: Use at your own risk. This software is **EXPERIMENTAL** and is not advised for use in production systems. Backing up your data before use is strongly recommended.
 
->I don't think is this the best way it could have been handled but I am just kind of in amazement that this worked to fix my audio on the index. I use separate headphones from the built in ones and the mic won't work if anything but the hdmi speakers on the headset were set to default audio output
+>I don't think is this the best way it could have been handled. I would happily accept if someone did this better and made it public
 
 # Valve Index Microphone Fix for Linux (PipeWire)
 
