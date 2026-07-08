@@ -1,6 +1,6 @@
 >Warning: Use at your own risk. This software is **EXPERIMENTAL** and is not advised for use in production systems. Backing up your data before use is strongly recommended.
 
->I don't think is this the best way it could have been handled. I would happily accept if someone did this better and made it public
+>I don't think this is the best way it could have been handled. I would happily accept if someone did this better and made it public
 
 # Valve Index Microphone Fix for Linux (PipeWire)
 
