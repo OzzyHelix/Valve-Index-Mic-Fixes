@@ -8,11 +8,12 @@ Changes from the original guide based on additional testing and a PC rebuild:
 
 ### Breaking Changes
 - **`pw-play /dev/zero` does not work** - `pw-play` requires a valid audio file format. A `silence.wav` file must be generated and used instead. See [Generate Silence File](#generate-silence-file).
-- **HDMI device names change between systems** - After a PC rebuild, the GPU PCI address changed from `pci-0000_03_00.1` to `pci-0000_12_00.1`, and the HDMI output changed from `hdmi-stereo-extra2` to `hdmi-stereo`. Always check your actual device name with `pactl list sinks short | grep hdmi`.
+- **HDMI device names change between systems** - After a PC rebuild, the GPU PCI address changed from `pci-0000_03_00.1` to `pci-0000_12_00.1`, and the HDMI output changed from `hdmi-stereo-extra2` to `hdmi-stereo`. The script now detects the HDMI sink name dynamically, so you don't need to hardcode it.
 
 ### New Approach
 - **Separate script file** (`index-mic-keepalive.sh`) instead of inline shell in the systemd unit file. This avoids complex quoting issues in systemd that caused `Unbalanced quoting` errors.
 - **Your headphones stay as the default output** - The old approach tried to route HDMI monitor audio to headphones via `module-loopback`, which caused mic monitoring/echo. The new approach simply keeps HDMI active in the background while your headphones remain default. Apps play directly to your headphones.
+- **No `pw-loopback` at all** - The old approach used `pw-loopback -P <hdmi-sink>` to keep HDMI active. The problem is that `pw-loopback` without a `-C` capture source captures from the **default source** (your mic), routing mic audio to HDMI and causing monitoring/echo. The new approach uses `pw-play` to play silence directly to the HDMI sink, keeping it active without any mic capture.
 - **No `module-loopback` for audio routing** - The old approach used `module-loopback source=hdmi.monitor sink=headphones` which routed ALL HDMI audio (including mic monitoring from SteamVR) to your headphones, causing echo. This is no longer needed.
 
 ### SteamVR Settings
@@ -28,6 +29,67 @@ Changes from the original guide based on additional testing and a PC rebuild:
 - `index-mic-keepalive.sh` (new) - Separate script file for the keepalive logic
 - `index-mic-keepalive.service` - Now calls the script instead of inline shell
 - `silence.wav` (new) - Required for `pw-play` to function
+
+---
+
+## Quick Start
+
+If you just want to get this working, here's the short version:
+
+1. **Generate silence file:**
+   ```bash
+   python3 -c "
+   import wave, struct
+   f = wave.open('$HOME/.config/silence.wav', 'w')
+   f.setnchannels(2)
+   f.setsampwidth(2)
+   f.setframerate(48000)
+   data = struct.pack('<' + 'h' * (48000 * 2), *([0] * (48000 * 2)))
+   f.writeframes(data)
+   f.close()
+   print('Created silence.wav')
+   "
+   ```
+
+2. **Copy the script and make it executable:**
+   ```bash
+   cp index-mic-keepalive.sh ~/.config/index-mic-keepalive.sh
+   chmod +x ~/.config/index-mic-keepalive.sh
+   ```
+
+3. **Create the systemd service** (replace `YOUR_USERNAME` in the service file):
+   ```bash
+   mkdir -p ~/.config/systemd/user
+   # Edit the service file with your username, then:
+   cp index-mic-keepalive.service ~/.config/systemd/user/index-mic-keepalive.service
+   systemctl --user daemon-reload
+   systemctl --user enable index-mic-keepalive.service
+   ```
+
+4. **Set your default audio devices:**
+   ```bash
+   # Set your headphones as default output
+   pactl set-default-sink $(pactl list sinks short | grep -i "creative\|bluetooth\|headphone" | head -1 | awk '{print $2}')
+
+   # Set Valve Index mic as default source
+   pactl set-default-source $(pactl list sources short | grep -i valve | head -1 | awk '{print $2}')
+   ```
+
+5. **Update SteamVR audio settings** in `~/.local/share/Steam/config/steamvr.vrsettings`:
+   ```json
+   "audio" : {
+       "enablePlaybackDeviceOverride" : true,
+       "enableRecordingDeviceOverride" : true,
+       "enablePlaybackMirror" : false,
+       "playbackMirrorDevice" : "",
+       "recordingDevice" : "YOUR_MIC_SOURCE_NAME"
+   }
+   ```
+   Find your mic source name with: `pactl list sources short | grep -i valve`
+
+6. **Start SteamVR** - the service auto-starts when vrserver runs.
+
+That's it. Your headphones stay as default, mic works in VRChat, no echo.
 
 ---
 
@@ -148,34 +210,33 @@ print('Created silence.wav')
 
 Using a separate script avoids quoting issues with systemd unit files.
 
+**Important:** Do NOT use `pw-loopback` to keep HDMI active. `pw-loopback -P <sink>` captures from the default source (your mic) and routes it to HDMI, causing mic monitoring/echo. Instead, use `pw-play` to play silence directly to the HDMI sink.
+
 ```bash
 #!/bin/bash
 # Keep Valve Index HDMI active for mic while SteamVR runs
 # Your headphones stay as default - apps play there directly
-HDMI_SINK="alsa_output.pci-0000_12_00.1.hdmi-stereo"
 SILENCE="/home/$USER/.config/silence.wav"
 
 while true; do
     if pgrep -x vrserver > /dev/null 2>&1; then
+        # Find the active HDMI sink dynamically
+        HDMI_SINK=$(pactl list sinks short 2>/dev/null | grep "hdmi-stereo" | grep -v monitor | head -1 | awk '{print $2}')
+
+        if [ -z "$HDMI_SINK" ]; then
+            sleep 2
+            continue
+        fi
+
         # Set HDMI volume to 0 so no audio leaks through Index speakers
         pactl set-sink-volume "$HDMI_SINK" 0% 2>/dev/null
 
-        # Start loopback playing silence to keep HDMI in RUNNING state
-        if ! pgrep -f "pw-loopback.*hdmi-keepalive" > /dev/null 2>&1; then
-            pw-loopback -n hdmi-keepalive -P "$HDMI_SINK" -c 2 -m "[ FL FR ]" 2>/dev/null &
-            sleep 2
-            pactl set-sink-volume "$HDMI_SINK" 0% 2>/dev/null
-            pw-play --target=hdmi-keepalive "$SILENCE" 2>/dev/null &
-        fi
-
-        # Wait while vrserver is running
+        # Play silence directly to HDMI - keeps it in RUNNING state
+        # No loopback needed = no mic capture = no monitoring
         while pgrep -x vrserver > /dev/null 2>&1; do
-            sleep 1
+            pactl set-sink-volume "$HDMI_SINK" 0% 2>/dev/null
+            pw-play --target="$HDMI_SINK" "$SILENCE" 2>/dev/null
         done
-
-        # Cleanup
-        pkill -f "pw-loopback.*hdmi-keepalive" 2>/dev/null
-        pkill -f "pw-play.*silence" 2>/dev/null
     else
         sleep 2
     fi
@@ -196,7 +257,7 @@ Requires=pipewire.service
 
 [Service]
 ExecStartPre=/bin/sleep 3
-ExecStart=/home/ozzy/.config/index-mic-keepalive.sh
+ExecStart=/home/YOUR_USERNAME/.config/index-mic-keepalive.sh
 Restart=always
 RestartSec=5
 
@@ -204,18 +265,16 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-### Important: Find Your HDMI Device Name
+**Replace `YOUR_USERNAME` with your actual username.**
 
-The HDMI device name differs between systems. Find yours with:
+### HDMI Device Name
 
+The script now automatically detects the HDMI sink name at runtime, so you don't need to hardcode it. It finds whichever `hdmi-stereo` output is active.
+
+If you need to check manually:
 ```bash
 pactl list sinks short | grep hdmi
 ```
-
-Update `HDMI_SINK` in the script with your actual device name. Common patterns:
-- `alsa_output.pci-0000_12_00.1.hdmi-stereo` (AMD GPU, primary output)
-- `alsa_output.pci-0000_03_00.1.hdmi-stereo-extra2` (AMD GPU, secondary output)
-- `alsa_output.pci-0000_01_00.1.hdmi-stereo` (NVIDIA GPU)
 
 ### Install and Enable
 
@@ -345,7 +404,7 @@ pactl get-default-source    # Should be Valve Index mic
 1. Check if HDMI output is RUNNING: `pactl list sinks short | grep hdmi`
 2. Check if the keepalive service is running: `systemctl --user status index-mic-keepalive.service`
 3. Check if vrserver is running: `pgrep -a vrserver`
-4. Try manually: `pw-loopback -P <hdmi-sink-name> & sleep 2 && pw-play --target=<loopback-name> ~/.config/silence.wav`
+4. Try manually: `pw-play --target=<hdmi-sink-name> ~/.config/silence.wav`
 
 ### Hearing mic audio through headphones
 
@@ -356,13 +415,11 @@ pactl get-default-source    # Should be Valve Index mic
 
 ### HDMI device name changes after reboot
 
-The HDMI device number can change based on GPU/driver. Find the stable name:
+The script now detects the HDMI sink name dynamically, so this should not be an issue. If the mic still doesn't work, check which HDMI sink is available:
 
 ```bash
 pactl list sinks short | grep hdmi
 ```
-
-Update `HDMI_SINK` in `~/.config/index-mic-keepalive.sh` with the correct name.
 
 ### SteamVR not starting the keepalive service
 
@@ -380,9 +437,11 @@ Adjust the `api.alsa.period-size` and `api.alsa.headroom` values in the WirePlum
 ### Mic works but echo/monitoring persists
 
 If you hear yourself after confirming `enablePlaybackMirror: false`:
-1. Make sure you restarted SteamVR after changing the setting
-2. Check that no `module-loopback` is routing HDMI monitor to your headphones: `pactl list modules short | grep loopback`
-3. The keepalive script should NOT route HDMI monitor to your headphones - it only plays silence to keep HDMI active
+
+1. **Check for `pw-loopback` processes** - `pw-loopback -P <sink>` captures from the default source (your mic) and causes monitoring. Kill any: `pkill -f pw-loopback`
+2. Make sure you restarted SteamVR after changing the setting
+3. Check that no `module-loopback` is routing HDMI monitor to your headphones: `pactl list modules short | grep loopback`
+4. The keepalive script should use `pw-play` directly to HDMI, NOT `pw-loopback`. If your script uses `pw-loopback`, update it to the version in this guide.
 
 ## How It Works (Technical Details)
 
@@ -396,7 +455,7 @@ If you hear yourself after confirming `enablePlaybackMirror: false`:
 
 3. The mic audio and HDMI audio share the same USB device and implicitly share the same clock domain. When the HDMI output endpoint is suspended, the USB device's audio subsystem enters a low-power state that also disables the capture endpoint.
 
-4. The `pw-loopback` creates a null sink and routes its playback to the HDMI output. Playing silence to this sink keeps the HDMI audio endpoint in RUNNING state, which in turn keeps the mic capture endpoint active.
+4. `pw-play` plays silence directly to the HDMI output. This keeps the HDMI audio endpoint in RUNNING state, which in turn keeps the mic capture endpoint active. Unlike `pw-loopback`, `pw-play` does not capture from any source - it only plays audio, so it does not interfere with the mic.
 
 5. Setting HDMI volume to 0% prevents any audible output through the headset speakers while maintaining the active USB audio stream.
 
