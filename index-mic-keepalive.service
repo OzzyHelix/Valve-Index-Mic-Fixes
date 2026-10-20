@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep Valve Index HDMI active for mic (only when SteamVR runs)
+After=pipewire.service wireplumber.service
+Requires=pipewire.service
+
+[Service]
+ExecStartPre=/bin/sleep 3
+ExecStart=/home/YOUR_USERNAME/.config/index-mic-keepalive.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
