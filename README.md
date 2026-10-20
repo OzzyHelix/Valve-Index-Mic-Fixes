@@ -21,7 +21,7 @@ HMD speakers) over one USB connection. The audio endpoints use isochronous async
 clock/power domain.
 
 When the HDMI/DisplayPort playback endpoint is idle, PipeWire suspends it. That drops the whole
-USB audio subsystem into a low-power state and **silently disables the capture endpoint too** —
+USB audio subsystem into a low-power state and **silently disables the capture endpoint too**
 so the mic reads pure silence even though it looks perfectly healthy.
 
 ### Symptoms
@@ -49,7 +49,7 @@ so the mic reads pure silence even though it looks perfectly healthy.
 
 The mic and the HMD speakers share one USB audio clock. If the speaker half sleeps, the mic half
 sleeps with it. The fix therefore **keeps the speaker (HDMI) half busy with inaudible silence**
-while SteamVR is running, so the shared clock — and the mic — stay alive. Your normal headphones
+while SteamVR is running, so the shared clock — and the mic stay alive. Your normal headphones
 remain the default output; apps keep playing there directly.
 
 ```
